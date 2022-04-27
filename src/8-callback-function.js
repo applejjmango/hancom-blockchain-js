@@ -1,18 +1,18 @@
-// function eatMeals(food) {
-//   if (food === "sandwich") {
-//     eatLunch();
-//   } else {
-//     eatDinner();
-//   }
-// }
-// function eatLunch() {
-//   console.log("점심을 먹어요");
-// }
-// function eatDinner() {
-//   console.log("저녁을 먹어요");
-// }
+function eatMeals(food) {
+  if (food === "sandwich") {
+    eatLunch();
+  } else {
+    eatDinner();
+  }
+}
+function eatLunch() {
+  console.log("점심을 먹어요");
+}
+function eatDinner() {
+  console.log("저녁을 먹어요");
+}
 
-// eatMeals("sandwich");
+eatMeals("sandwich");
 
 // callback function
 function eatMeals2(food, eatLunchCB, eatDinnerCB) {
