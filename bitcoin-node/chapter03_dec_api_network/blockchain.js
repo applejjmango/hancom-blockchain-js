@@ -1,10 +1,15 @@
 const { v4: uuidv4 } = require("uuid");
 const sha256 = require("sha256");
 
+const currentNodeUrl = process.argv[3];
+
 class Blockchain {
   constructor() {
     this.chain = [];
     this.pendingTxs = []; // 멤풀이라고 한다. 멤풀은 트랜잭션이 머무르는 대기 공간이다.
+
+    this.currentNodeUrl = currentNodeUrl;
+    this.networkNodes = [];
 
     // Genesis Block(블록체인의 가장 첫 번째 블록)을 생성하는 코드
     this.createNewBlock("", "", 0);
