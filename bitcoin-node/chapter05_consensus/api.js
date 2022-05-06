@@ -12,62 +12,135 @@ app.use(express.json());
 const port = process.argv[2];
 
 const bitcoin = new Blockchain();
-const nodeAddress = uuidv4().split("-").join("");
 
-// get => 어떤 데이터를 가져온다
-// req => request
-// res => response
 app.get("/blockchain", (req, res) => {
   res.send(bitcoin);
 });
 
-// post => 어떤 데이터를 보낸다.
-app.post("/transaction", (req, res) => {
-  const data = req.body;
-  const blockIndex = bitcoin.createNewTransaction(data.amount, data.sender, data.recipient);
-  res.json({
-    msg: `Transaction will be added in block ${blockIndex}`,
+app.post("/transaction/broadcast", (req, res) => {
+  const body = req.body;
+
+  const newTx = bitcoin.createNewTransaction(body.amount, body.sender, body.recipient);
+  bitcoin.addNewTxToPendingTx(newTx); // 현재 노드의 Mempool 생성된 트랜잭션 담기
+
+  const requestPromise = [];
+
+  bitcoin.networkNodes.forEach((networkNodeUrl) => {
+    const requestOptions = {
+      uri: networkNodeUrl + "/transaction",
+      method: "POST",
+      body: newTx,
+      json: true,
+    };
+
+    requestPromise.push(rp(requestOptions));
   });
+
+  Promise.all(requestPromise).then((data) => {
+    res.json({
+      msg: "Transaction created and broadcast successfully",
+    });
+  });
+});
+
+// Refactoring
+app.post("/transaction", (req, res) => {
+  const newTx = req.body;
+
+  // if body contains nothings, send an error msg
+
+  if (Object.entries(newTx).length > 0) {
+    const blockIndex = bitcoin.addNewTxToPendingTx(newTx);
+    res.json({
+      msg: `The new transaction will be added in block ${blockIndex}`,
+    });
+  } else {
+    res.json({
+      msg: "No transaction data",
+    });
+  }
 });
 
 // Create a new Block
 app.get("/mine", (req, res) => {
-  // 9. 마지막 블록 정보에서 해쉬를 가져오면 이전 블록 해쉬가 됩니다.
+  const nodeAddress = uuidv4().split("-").join("");
+
   const lastBlock = bitcoin.getLastBlock();
   const previousBlockHash = lastBlock["hash"];
 
-  // 11. currentBlockData는 pending 트랜잭션 어레이에 담긴 모든 트랜잭션과 인덱스 정보입니다.
   const currentBlockData = {
     transactions: bitcoin.pendingTxs,
     index: lastBlock["index"] + 1,
   };
 
-  // 10. 논스 값을 구하기 위해 pow 메서드를 실행합니다. 인자로는 이전 블록 해쉬 값과 현재 블록 데이터
-  // 정보입니다. previousBlockHash는 구혀져있고 currentBlockData 정보만 확인하면 됩니다
   const nonce = bitcoin.pow(previousBlockHash, currentBlockData);
 
-  // 12. 블록해쉬 정보를 구하기 위해 3개의 인자 previousBlockHash, currentBlockData, nonce
-  // 를 넣고 hashBlock 메서드를 호출하였습니다.
   const blockHash = bitcoin.hashBlock(previousBlockHash, currentBlockData, nonce);
-
-  // 8. 새로운 블록을 생성하기 위해 createNewBlock 메서드를 호출하겠습니다. 인자로는 nonce 값
-  // 이전 블록의 해쉬 값, 그리고 마지막으로 현재 블록의 해쉬 값이 들어갑니다. previousBlockHash를
-  // 구하기 위해 getLastBlock으로 불러오겠습니다.
-  // 13. createNewBlock메서드에 필요한 모든 인자를 구했으니 대입하여 새로운 블록을 생성합니다.
   const newBlock = bitcoin.createNewBlock(previousBlockHash, blockHash, nonce);
 
-  // 14. 마지막으로 블록이 생성될 때마다 코인 보상을 해주는 코드입니다. createNewTx로 새로운 트랜잭션을
-  // 생성하는데, 첫 번째 인자인 amount에는 현재 비트코인 보상 기준인 12.5개가 들어 있고 두 번째 인자인
-  // sender는 빈 코드로 넣었고 마지막으로 수신자인 recipient에는 앞서서 만든 임의의 노드 주소인
-  // nodeAddress를 넣었습니다. 테스트해보면 보상은 펜딩 트랜잭션에 담겨 있다가 다음 블록이 생성되면
-  // 새로운 블록으로 보상 트랜잭션이 들어가게 됩니다.
-  bitcoin.createNewTransaction(50, "00", nodeAddress);
+  const requestPromises = [];
+  // 다른 노드들에게 새로운 블록이 만들어졌다고 요청하는 부분
+  bitcoin.networkNodes.forEach((networkNodeUrl) => {
+    const requestOptions = {
+      uri: networkNodeUrl + "/receive-new-block",
+      method: "POST",
+      body: { newBlock: newBlock },
+      json: true,
+    };
 
-  res.json({
-    note: "New Block mined Successfully",
-    isSuccessful: true,
-    newBlock: newBlock,
+    requestPromises.push(rp(requestOptions));
   });
+
+  // 새로운 블록을 생성하기 위해 블록 리워드 전파
+  Promise.all(requestPromises)
+    .then((data) => {
+      const requestOptions = {
+        uri: bitcoin.currentNodeUrl + "/transaction/broadcast",
+        method: "POST",
+        body: {
+          amount: 50,
+          sender: "00",
+          recipient: nodeAddress,
+        },
+        json: true,
+      };
+      return rp(requestOptions);
+    })
+
+    .then((data) => {
+      res.json({
+        msg: "New block mined and broadcast successfully",
+        block: newBlock,
+      });
+    });
+});
+
+// Refactoring
+app.post("/receive-new-block", (req, res) => {
+  // To validate a valid block, we need to check 1. hash 2. index(number)
+  const newBlock = req.body.newBlock;
+  console.log("newBlock => ", newBlock);
+  const lastBlock = bitcoin.getLastBlock();
+
+  const validHash = lastBlock["hash"] === newBlock["previousBlockHash"];
+  const validIndex = lastBlock["index"] + 1 === newBlock["index"];
+
+  console.log("Both true", validHash, validIndex);
+
+  if (validHash && validIndex) {
+    bitcoin.chain.push(newBlock);
+    bitcoin.pendingTxs = [];
+
+    res.json({
+      msg: "New block received and accepted",
+      newBlock: newBlock,
+    });
+  } else {
+    res.json({
+      msg: "New block rejected",
+      newBlock: newBlock,
+    });
+  }
 });
 
 // 1. 노드 간의 서로 연결되어 분산 네트워크 구축을 위한 엔드포인트입니다.
@@ -126,10 +199,6 @@ app.post("/node/registration-broadcasting", (req, res) => {
     });
 });
 
-// 5. 새로운 노드를 네트워크 전체에 퍼져있는 노드에게 등록하는 코드입니다.
-// 바디로 들어온 새로운 노드 url을 networkNodes에 이미 있는지 파악 및 현재 노드 url과 다르면
-// networkNodes 어레이에 새로운 노드를 푸쉬해서 등록합니다. 6번 이동 >
-// register a node across network nodes
 app.post("/node/registration", (req, res) => {
   const newNodeUrl = req.body.newNodeUrl;
   const nodeNotInNetwork = !bitcoin.networkNodes.includes(newNodeUrl);
@@ -144,8 +213,6 @@ app.post("/node/registration", (req, res) => {
   });
 });
 
-// 8. body에 모든 네트워크 노드를 담아와서 새로 등록된 노드에게 현재 노드들의 정보를 모두 담아주는 코드이다.
-// 9번으로 >> register multiple nodes at once
 app.post("/node/registration/all", (req, res) => {
   const allNetworkNodes = req.body.allNetworkNodes;
 
@@ -159,6 +226,52 @@ app.post("/node/registration/all", (req, res) => {
   });
   res.json({
     msg: "All nodes synchronized successfully",
+  });
+});
+
+app.get("/consensus", (req, res) => {
+  const requestPromises = [];
+
+  bitcoin.networkNodes.forEach((networkNodeUrl) => {
+    const requestOptions = {
+      uri: networkNodeUrl + "/blockchain",
+      method: "GET",
+      json: true,
+    };
+
+    requestPromises.push(rp(requestOptions));
+  });
+
+  Promise.all(requestPromises).then((blockchains) => {
+    const currentChainLength = bitcoin.chain.length;
+    let maxChainLength = currentChainLength;
+    let newLongestChain = null;
+    let newPendingTxs = null;
+
+    // Loop through all other blockchains to check if which is the longest chain
+    blockchains.forEach((blockchain) => {
+      if (blockchain.chain.length > maxChainLength) {
+        maxChainLength = blockchain.chain.length;
+        newLongestChain = blockchain.chain;
+        newPendingTxs = blockchain.pendingTxs;
+      }
+    });
+
+    if (!newLongestChain || (newLongestChain && !bitcoin.chainIsValid(newLongestChain))) {
+      res.json({
+        msg: "Current chain is the longest so it is not replaced",
+        chain: bitcoin.chain,
+      });
+    } else if (newLongestChain && bitcoin.chainIsValid(newLongestChain)) {
+      // There is a new longest chain, the replace current node
+      bitcoin.chain = newLongestChain;
+      bitcoin.pendingTxs = newPendingTxs;
+
+      res.json({
+        msg: "This chain has been replaced",
+        chain: bitcoin.chain,
+      });
+    }
   });
 });
 
