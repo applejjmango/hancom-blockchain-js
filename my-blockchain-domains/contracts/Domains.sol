@@ -6,13 +6,13 @@ import "hardhat/console.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
-import {Base64} from "./libraries/Base64";
+import { Base64 } from "./libraries/Base64.sol";
 import { StringUtils } from "./libraries/StringUtils.sol";
 
 // Inherit the contract that we imported
 contract Domains is ERC721URIStorage {
     // OpenZeppelin to help us keep track of tokenIds
-    using Counters for Counters.Couter;
+    using Counters for Counters.Counter;
     Counters.Counter private _tokenIds;
 
     // SVG File Import 
@@ -57,8 +57,42 @@ contract Domains is ERC721URIStorage {
         // Check if enough Matic was paid in the transaction
         require(msg.value >= _price, "Not enough Matic paid"); 
 
-        domains[name] = msg.sender;
-        console.log("%s has registed a domain", msg.sender);
+        // encodePacked function to turn a bunch of strings into bytes and then combines them
+        // Combine the name passed into the function with the TLD
+        string memory _name = string(abi.encodePacked(name, ".", tld));
+        
+        // Create the SVG (image) for the NFT with the name
+        string memory finalSvg = string(abi.encodePacked(svgPartOne, _name, svgPartTwo));
+
+        uint256 newRecordId = _tokenIds.current();
+        uint256 length = StringUtils.strlen(name);
+        string memory strLen = Strings.toString(length);
+
+        console.log("Registering %s.%s on the contract with tokenID %d", name, tld, newRecordId);
+
+        // Create the JSON metadata of Our NFT
+        string memory json = Base64.encode(
+            abi.encodePacked('{"name": "',
+                _name,
+                '", "description": "A domain on the com name service", "image": "data:image/svg+xml;base64,',
+                Base64.encode(bytes(finalSvg)),
+                '","length":"',
+                strLen,
+                '"}')
+            );
+            string memory finalTokenUri = string(abi.encodePacked("data:application/json;base64,", json));
+            
+            console.log("\n--------------------------------------------------------");
+            
+            console.log("Final tokenURI", finalTokenUri);
+            
+            console.log("--------------------------------------------------------\n");  
+
+            _safeMint(msg.sender, newRecordId);
+            _setTokenURI(newRecordId, finalTokenUri);
+            domains[name] = msg.sender;
+
+            _tokenIds.increment();
     }
 
     function getAddress(string calldata name) public view returns (address) {
