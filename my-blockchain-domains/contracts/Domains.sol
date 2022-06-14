@@ -11,6 +11,14 @@ import { StringUtils } from "./libraries/StringUtils.sol";
 
 // Inherit the contract that we imported
 contract Domains is ERC721URIStorage {
+    error UnAuthorized();
+    error AlreadyRegistered();
+    error InvalidName(string name);
+
+
+    // owner definition
+    address payable public owner; 
+    
     // OpenZeppelin to help us keep track of tokenIds
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIds;
@@ -26,9 +34,28 @@ contract Domains is ERC721URIStorage {
     mapping(string => address) public domains;
     mapping(string => string) public records;
 
-    constructor(string memory _tld) payable ERC721("Com Name Service", "CNS") {
+    mapping(uint => string) public names;
+
+    constructor(string memory _tld) payable ERC721("Strangers Name Service", "SNS") {
+        owner = payable(msg.sender);
         tld = _tld;
         console.log("%s name service deployed", _tld);
+    }
+
+    modifier onlyOwner() {
+        require(isOwner());
+        _;
+    }
+
+    function isOwner() public view returns (bool) {
+        return msg.sender == owner; 
+    }
+
+    function withdraw() public onlyOwner {
+        uint amount = address(this).balance;
+
+        (bool success, ) = msg.sender.call{value: amount}("");
+        require(success, "Failed to withdraw the contract balance");
     }
 
     // This function will give us the price of a domain based on length of the domain
@@ -50,7 +77,9 @@ contract Domains is ERC721URIStorage {
 
     // A register function that adds their name to a mapping
     function register(string calldata name) public payable {
-        require(domains[name] == address(0)); 
+        // require(domains[name] == address(0)); 
+        if (domains[name] != address(0)) revert AlreadyRegistered();
+        if (!valid(name)) revert InvalidName(name);
 
         uint _price = price(name);
 
@@ -92,6 +121,8 @@ contract Domains is ERC721URIStorage {
             _setTokenURI(newRecordId, finalTokenUri);
             domains[name] = msg.sender;
 
+            names[newRecordId] = name;
+
             _tokenIds.increment();
     }
 
@@ -101,12 +132,30 @@ contract Domains is ERC721URIStorage {
 
     function setRecord(string calldata name, string calldata record) public {
          // Checking that the owner is the transaction sender
-        require(domains[name] == msg.sender, "You are already registered");
+        // require(domains[name] == msg.sender, "You are already registered");
+        if (domains[name] != msg.sender) revert UnAuthorized();
         records[name] = record;
     }
 
     function getRecord(string calldata name) public view returns (string memory) {
         return records[name];
+    }
+
+    // Reading Blockchain data is free
+    function getAllNames() public view returns (string[] memory) {
+        console.log("Getting all names from contract...");
+        string[] memory allNames = new string[](_tokenIds.current());
+
+        for (uint i = 0; i < _tokenIds.current(); i++) {
+            allNames[i] = names[i];
+            console.log("Name for token %d is %s", i, allNames[i]);
+        }
+
+        return allNames;
+    }
+
+    function valid(string calldata name) public pure returns(bool) {
+        return StringUtils.strlen(name) >= 3 && StringUtils.strlen(name) <= 10;
     }
 
 }
